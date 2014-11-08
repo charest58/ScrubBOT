@@ -26,11 +26,13 @@ int irSensor1 = 0;
 int irSensor2 = 0;
 int irSensor3 = 0;
 
-
+//store the AD values from the IR sensors
 int onTile1 = 0;
 int onTile2 = 0;
+int onTile3 = 0;
 int onGrout1 = 0;
 int onGrout2 = 0;
+int onGrout3 = 0;
 boolean onTrack = false; //set for off grout
 int trackHistory = 0;
 
@@ -45,7 +47,9 @@ void setup() {
   digitalWrite(emitterPin1, LOW); //IR emitter 1 off
   pinMode(emitterPin2, OUTPUT);
   digitalWrite(emitterPin2, LOW); //IR emitter 2 off
-  //setup onboard LED
+  pinMode(emitterPin3, OUTPUT);
+  digitalWrite(emitterPin3, LOW); //IR emitter 3 off
+  // setup onboard LED
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
   //setup front crash button
@@ -82,89 +86,87 @@ void loop() {
 void calibrate(){
   digitalWrite(LED, LOW);
   //display message to user
-  Serial.println("Place both sensors over tile, then press 'Bump Button'.");
+  Serial.println("Place all three sensors over tile, then press 'Bump Button'.");
+  wait_for_bump_button_press();
+  Serial.println("OK...");
+  digitalWrite(LED, HIGH);
+  onTile1 = IR_sensor(sensorPin1, emitterPin1);
+  onTile2 = IR_sensor(sensorPin2, emitterPin2);
+  onTile3 = IR_sensor(sensorPin3, emitterPin3);
+  Serial.print("On tile, left side: ");
+  Serial.println(onTile1);
+  Serial.print("On tile, right side: ");
+  Serial.println(onTile2);
+  Serial.print("On tile, center: ");
+  Serial.println(onTile3);
+  delay(2500);
+  digitalWrite(LED, LOW);  
+  Serial.println("...");
+  
+  Serial.println("Place all three sensors over grout line intersection (+), then press 'Bump Button'.");
+  wait_for_bump_button_press();
+  Serial.println("OK...");
+  digitalWrite(LED, HIGH);
+  onGrout1 = IR_sensor(sensorPin1, emitterPin1);
+  onGrout2 = IR_sensor(sensorPin2, emitterPin2);
+  onGrout3 = IR_sensor(sensorPin3, emitterPin3);
+  Serial.print("On grout, left side: ");
+  Serial.println(onGrout1);
+  Serial.print("On grout, right side: ");
+  Serial.println(onGrout2);
+  Serial.print("On grout, center: ");
+  Serial.println(onGrout3);
+  delay(1500);
+  digitalWrite(LED, LOW);
+  Serial.println("...");
+}
+
+void wait_for_bump_button_press(){
   while(bumpVal == 1){
     bumpVal = digitalRead(bumpButton);
     //do nothing... wait for input
     delay(5);
   }
   bumpVal = 1;  //reset bump value
-  Serial.println("OK...");
-  digitalWrite(LED, HIGH);
-  onTile1 = IR_sensor(sensorPin1, emitterPin1);
-  onTile2 = IR_sensor(sensorPin2, emitterPin2);
-  Serial.print("On tile, left side: ");
-  Serial.println(onTile1);
-  Serial.print("On tile, right side: ");
-  Serial.println(onTile2);
-  delay(2500);
-  digitalWrite(LED, LOW);
-  Serial.println("...");
-  Serial.println("Place both sensors over grout line, then press 'Bump Button'.");
-  while(bumpVal == 1){
-    bumpVal = digitalRead(bumpButton);
-    //do nothing... wait for input
-    delay(5);
-  }
-  bumpVal = 1;
-  Serial.println("OK...");
-  digitalWrite(LED, HIGH);
-  onGrout1 = IR_sensor(sensorPin1, emitterPin1);
-  onGrout2 = IR_sensor(sensorPin2, emitterPin2);
-  Serial.print("On grout, left side: ");
-  Serial.println(onGrout1);
-  Serial.print("On grout, right side: ");
-  Serial.println(onGrout2);
-  delay(1500);
-  digitalWrite(LED, LOW);
-  Serial.println("...");
 }
-
-
 
 //read IR sensor, pass which pin to read
 //returns the integer value of the read analog pin
-int IR_sensor(int sensorPin, int emitterPin){
-  int averageNum = 5;
-  int background = 0; //value without IR emitter on
-  int analogVal = 0; //value with IR emitter on
+int IR_sensor(int sensorPin, int emitterPin){  
+  int n = 3; //right bit shift by this many bits to divide by 2^n, limit this to 2,3, or 4 (4,8, or 16 samples)
+  int averageNum = 1 << n; //2^n
+  unsigned int background = 0; //value with IR emitter off, must be unsigned to avoid sign extension when dividing
+  unsigned int analogVal = 0; //value with IR emitter on
   int ms = 5;
   // read background input on analog:
   digitalWrite(emitterPin, LOW);
   delay(ms);
-  for(int i = 0; i <= averageNum; i++){
+  for(int i = 0; i <= averageNum; i++){ //AD is 12-bit, int is 16-bit, roll-over isn't an issue as long as you collect less than 16 samples
     background += analogRead(sensorPin);
-    //Serial.print("bkgnd-");
-    //Serial.println(background);
     delay(ms);
   }
-  background /= averageNum; //get the average value
-  //Serial.println(background);
+  background >>= n; //get the average value
   //read illuminated input on analog
   digitalWrite(emitterPin, HIGH);
   delay(ms);
   for(int i = 0; i <= averageNum; i++){
     analogVal += analogRead(sensorPin);
-    //Serial.print("irSensor1-");
-    //Serial.println(analogVal);
     delay(ms);
   }
-  analogVal /= averageNum; //get the average value
+  analogVal >>= n; //get the average value
   //Serial.println(analogVal);
   analogVal -= background; //subtract average background
-  //Serial.print("bkgnd sub val-");
-  //Serial.println(analogVal);
   digitalWrite(emitterPin, LOW);
   return analogVal;
 }
 
 void scrubRight() {
- leftServo.write(leftForward); //drive yellow wheel forward
+ leftServo.write(leftForward); //drive left wheel forward
  delay(6);
 }
 
 void scrubLeft() {
- rightServo.write(rightForward); //drive blue wheel forward
+ rightServo.write(rightForward); //drive right wheel forward
  delay(6);
 }
 
@@ -186,9 +188,9 @@ void scrubBackward() { //drive back and to the right
   delay(550);
 }
 
-int overGrout1() {
- irSensor1 = IR_sensor(sensorPin1, emitterPin1);
- if( abs(irSensor1 - onTile1) <= abs(irSensor1 - onGrout1)) {
+int overGrout(int sensorPin, int emitterPin, int onTile, int onGrout) {
+ int irSensor = IR_sensor(sensorPin, emitterPin);
+ if( abs(irSensor - onTile) <= abs(irSensor - onGrout)) {
    return 1; //over grout
  }
  else {
@@ -197,48 +199,63 @@ int overGrout1() {
  
 }
 
-int overGrout2() {
- irSensor2 = IR_sensor(sensorPin2, emitterPin2);
- if( abs(irSensor2 - onTile2) <= abs(irSensor2 - onGrout2)) {
-   return 1; //over grout
- }
- else {
-   return 0; // over tile
- }
-}
-
 void followGrout() {
-  int leftStatus = 0;
+  int leftStatus = 0; //could save memory by using status bits rather than whole integers
   int rightStatus = 0;
+  int centerStatus = 0;
   
-  leftStatus = overGrout1();
-  rightStatus = overGrout2();
+  leftStatus = overGrout(sensorPin1, emitterPin1, onTile1, onGrout1);
+  rightStatus = overGrout(sensorPin2, emitterPin2, onTile2, onGrout2);
+  centerStatus = overGrout(sensorPin3, emitterPin3, onTile3, onGrout3);
   
-  //forward on tile
-  if (leftStatus == 1 && rightStatus == 1) {
+ 
+  if (leftStatus == 0 && centerStatus == 0 && rightStatus == 0) {
+    onTrack = false;
+    digitalWrite(LED, HIGH);
+    scrubForward(); //go forward until you see any grout
+  }
+  else if (leftStatus == 0 && centerStatus == 0 && rightStatus == 1) {
+    onTrack = false;
+    digitalWrite(LED, HIGH);
+    scrubRight(); //go toward the grout
+  }
+  else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 0) {
     onTrack = true;
     digitalWrite(LED, LOW);
-    scrubForward();
+    scrubForward(); //on track
   }
-  
-  //go right
-  if (leftStatus == 0 && rightStatus == 1) {
+  else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 1) {
+    onTrack = true;
+    digitalWrite(LED, LOW);
+    scrubRight(); //adjust alignmnet
+  }
+  else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 0) {
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubRight();
+    scrubLeft(); //go toward the grout
   }
-  //go left
-  else if (leftStatus == 1 && rightStatus == 2) {
+  else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 1) {
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubLeft();
+    scrubBackward();
+    scrubLeft(); //crossing grout, try to center on it
   }
-  //go forward
+  else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 0) {
+    onTrack = true;
+    digitalWrite(LED, LOW);
+    scrubLeft(); //adjust alignment
+  }
+  else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 1) {
+    onTrack = true;
+    digitalWrite(LED, LOW);
+    scrubForward(); //on track at a grout crossing, opportunity for re-calibration
+  }
   else {
-    onTrack = true;
-    digitalWrite(LED, LOW);
-    scrubForward();
+    onTrack = false;
+    digitalWrite(LED, HIGH);
+    scrubForward(); //catch-all
   }
+
   bumpVal = digitalRead(bumpButton);
   if(bumpVal == 0) {
     bumpVal = 1;
