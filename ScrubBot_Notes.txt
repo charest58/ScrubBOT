@@ -1,0 +1,39 @@
+pin mapping:
+
+pin#	variable		function
+2		leftServo		left rear wheel (yellow)
+4		rightServo		right rear wheel (blue)
+13		LED				on board LED
+A13		sensorPin3		center IR sensor
+A14		sensorPin2		right side (blue) IR sensor
+A15		sensorPin1		left side (yellow) IR sensor
+45		bumpButton		front obstacle sensor, user input
+46		emitterPin3		center IR LED power
+48		emitterPin2		right side (blue) IR LED power
+50		emitterPin1		left side (yellow) IR LED power
+
+
+
+
+
+75 - slowing
+80 - slow
+
+95 - stop (leftServo - 180 is FWD) (rightServo - 0 is FWD)
+
+110 - slow
+115 - slowing
+
+
+irSensor1 (left side, yellow)
+	Tile: 649, 642
+	Both on Grout: 532
+	light Grout: 477
+	dark Grout: 452
+irSensor2 (right side, blue)
+	Tile: 602, 617
+	Both on Grout: 487
+	light Grout: 425
+	dark Grout: 386
+	
+	
