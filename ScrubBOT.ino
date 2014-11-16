@@ -1,20 +1,22 @@
 /*
-  ScrubBOT: robot for cleaning grout
- */
+  ScrubBOT: robot for cleaning grout and other things
+  Assumptions: using Arduino Mega (1280 or 2560) and components in schematic at: https://github.com/charest58/scrubBOT
+  Created by: Kris Larsen & Mike Charest
+*/
  
 #include <Servo.h>
-Servo leftServo; //yellow wheel
-Servo rightServo; //blue wheel
+Servo leftServo; //left wheel
+Servo rightServo; //right wheel
 int leftForward = 121;
 int leftBackward = 78;
 int rightForward = 79;
 int rightBackward = 121;
 
-
 //pin assignments:
 int emitterPin1 = 50; //left side IR LED PWR
 int emitterPin2 = 48; //right side IR LED PWR
 int emitterPin3 = 46; //center IR LED PWR
+int sensorPwrPin3 = 47; //center IR sensor PWR pin
 int sensorPin1 = 15; //left side IR sensor
 int sensorPin2 = 14; //right side IR sensor
 int sensorPin3 = 13; //center IR sensor
@@ -43,12 +45,14 @@ void setup() {
   // initialize serial communication at 9600 bits per second:
   Serial.begin(9600);
   // setup IR emitter/receivers:
-  pinMode(emitterPin1, OUTPUT);
+  pinMode(emitterPin1, OUTPUT); //IR emitter 1 power pin
   digitalWrite(emitterPin1, LOW); //IR emitter 1 off
-  pinMode(emitterPin2, OUTPUT);
+  pinMode(emitterPin2, OUTPUT); //IR emitter 2 power pin
   digitalWrite(emitterPin2, LOW); //IR emitter 2 off
-  pinMode(emitterPin3, OUTPUT);
+  pinMode(emitterPin3, OUTPUT); //IR emitter 2 power pin (center)
   digitalWrite(emitterPin3, LOW); //IR emitter 3 off
+  pinMode(sensorPwrPin3, OUTPUT); //IR LED sensor 3 power pin
+  digitalWrite(sensorPwrPin3, HIGH);  //Turn IR sensor power on - could toggle with each read if needed
   // setup onboard LED
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
@@ -102,7 +106,6 @@ void calibrate(){
   delay(2500);
   digitalWrite(LED, LOW);  
   Serial.println("...");
-  
   Serial.println("Place all three sensors over grout line intersection (+), then press 'Bump Button'.");
   wait_for_bump_button_press();
   Serial.println("OK...");
@@ -133,19 +136,21 @@ void wait_for_bump_button_press(){
 //read IR sensor, pass which pin to read
 //returns the integer value of the read analog pin
 int IR_sensor(int sensorPin, int emitterPin){  
-  int n = 3; //right bit shift by this many bits to divide by 2^n, limit this to 2,3, or 4 (4,8, or 16 samples)
+  int n = 8; //right bit shift by this many bits to divide by 2^n, limit this to 2,3, or 4 (4,8, or 16 samples)
   int averageNum = 1 << n; //2^n
   unsigned int background = 0; //value with IR emitter off, must be unsigned to avoid sign extension when dividing
   unsigned int analogVal = 0; //value with IR emitter on
-  int ms = 5;
+  int ms = 4;
   // read background input on analog:
-  digitalWrite(emitterPin, LOW);
+  digitalWrite(emitterPin, LOW);  //turn IR LED emitter off for background measurement
   delay(ms);
-  for(int i = 0; i <= averageNum; i++){ //AD is 12-bit, int is 16-bit, roll-over isn't an issue as long as you collect less than 16 samples
+  for(int i = 0; i <= averageNum; i++){ //AD is 10-bit, int is 16-bit, roll-over isn't an issue as long as you collect less than 16 samples
     background += analogRead(sensorPin);
     delay(ms);
   }
   background >>= n; //get the average value
+  Serial.print("bg= ");
+  Serial.print(background);
   //read illuminated input on analog
   digitalWrite(emitterPin, HIGH);
   delay(ms);
@@ -154,38 +159,41 @@ int IR_sensor(int sensorPin, int emitterPin){
     delay(ms);
   }
   analogVal >>= n; //get the average value
-  //Serial.println(analogVal);
+  Serial.print(" , val = ");
+  Serial.print(analogVal);
   analogVal -= background; //subtract average background
+  Serial.print(" , bgSubVal = ");
+  Serial.println(analogVal);
   digitalWrite(emitterPin, LOW);
   return analogVal;
 }
 
-void scrubRight() {
+void scrubRight(int scrubTime) {
  leftServo.write(leftForward); //drive left wheel forward
- delay(6);
+ delay(scrubTime); //usually around 5ms
 }
 
-void scrubLeft() {
+void scrubLeft(int scrubTime) {
  rightServo.write(rightForward); //drive right wheel forward
- delay(6);
+ delay(scrubTime); //usually around 5ms
 }
 
-void scrubForward() { //drive both wheels forward
+void scrubForward(int scrubTime) { //drive both wheels forward
   leftServo.write(leftForward);
   rightServo.write(rightForward);
-  delay(10);
+  delay(scrubTime); //usually around 20ms since it is on track
 }
 
-void scrubBackward() { //drive back and to the right
+void scrubBackRight() { //drive back and to the right
   leftServo.write(leftBackward);
   rightServo.write(rightBackward);
-  delay(750);
+  delay(150);
   leftServo.write(76);
   rightServo.write(76);
-  delay(290);
+  delay(150);
   leftServo.write(76);
   rightServo.write(95);
-  delay(550);
+  delay(350);
 }
 
 int overGrout(int sensorPin, int emitterPin, int onTile, int onGrout) {
@@ -196,71 +204,81 @@ int overGrout(int sensorPin, int emitterPin, int onTile, int onGrout) {
  else {
    return 0; // over tile
  }
- 
 }
 
 void followGrout() {
   int leftStatus = 0; //could save memory by using status bits rather than whole integers
   int rightStatus = 0;
   int centerStatus = 0;
+  int rightWheel = 1;
+  int leftWheel = 1;
   
   leftStatus = overGrout(sensorPin1, emitterPin1, onTile1, onGrout1);
   rightStatus = overGrout(sensorPin2, emitterPin2, onTile2, onGrout2);
   centerStatus = overGrout(sensorPin3, emitterPin3, onTile3, onGrout3);
   
- 
   if (leftStatus == 0 && centerStatus == 0 && rightStatus == 0) {
     onTrack = false;
-    digitalWrite(LED, HIGH);
-    scrubForward(); //go forward until you see any grout
+    digitalWrite(LED, HIGH);  //circle around in a widening arc
+    for(rightWheel < 500 || leftStatus == 1 || rightStatus ==1 || centerStatus ==1; rightWheel++;){
+      leftWheel = rightWheel * rightWheel;
+      scrubRight(rightWheel);
+      scrubLeft(leftWheel);
+      leftStatus = overGrout(sensorPin1, emitterPin1, onTile1, onGrout1);
+      rightStatus = overGrout(sensorPin2, emitterPin2, onTile2, onGrout2);
+      centerStatus = overGrout(sensorPin3, emitterPin3, onTile3, onGrout3);
+    }
   }
   else if (leftStatus == 0 && centerStatus == 0 && rightStatus == 1) {
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubRight(); //go toward the grout
+    scrubRight(7); //go toward the grout
   }
   else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 0) {
     onTrack = true;
     digitalWrite(LED, LOW);
-    scrubForward(); //on track
+    scrubForward(20); //on track, keep on truckin'
   }
   else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 1) {
     onTrack = true;
     digitalWrite(LED, LOW);
-    scrubRight(); //adjust alignmnet
+    scrubRight(3); //adjust alignmnet a little
   }
   else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 0) {
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubLeft(); //go toward the grout
+    scrubLeft(7); //go toward the grout
   }
   else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 1) {
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubBackward();
-    scrubLeft(); //crossing grout, try to center on it
+    scrubRight(20); //over tile only,near groutline, try to align with grout again
   }
   else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 0) {
     onTrack = true;
     digitalWrite(LED, LOW);
-    scrubLeft(); //adjust alignment
+    scrubLeft(3); //adjust alignment
   }
   else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 1) {
     onTrack = true;
     digitalWrite(LED, LOW);
-    scrubForward(); //on track at a grout crossing, opportunity for re-calibration
+    scrubForward(20); //on track at a grout crossing, opportunity for re-calibration
   }
-  else {
+  else { // do nothing but wait and blink the LED, since this section should never run
     onTrack = false;
     digitalWrite(LED, HIGH);
-    scrubForward(); //catch-all
+    delay(500);
+    digitalWrite(LED, LOW);
+    delay(500);
+    digitalWrite(LED, HIGH);
+    delay(500);
   }
 
   bumpVal = digitalRead(bumpButton);
   if(bumpVal == 0) {
     bumpVal = 1;
     digitalWrite(LED, HIGH);
-    scrubBackward();
+    scrubBackRight();
   }
   if(onTrack == false) {
      off_track();
