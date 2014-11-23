@@ -1,42 +1,28 @@
 /*
-  ScrubBOT: robot for cleaning grout and other things
-  Assumptions: using Arduino Mega (1280 or 2560) and components in schematic at: https://github.com/charest58/scrubBOT
-  Created by: Kris Larsen & Mike Charest
-*/
+  ScrubBOT: robot for cleaning grout
+ */
  
 #include <Servo.h>
-Servo leftServo; //left wheel
-Servo rightServo; //right wheel
+Servo leftServo; //yellow wheel
+Servo rightServo; //blue wheel
 int leftForward = 121;
 int leftBackward = 78;
 int rightForward = 79;
 int rightBackward = 121;
 
 //pin assignments:
-int emitterPin1 = 50; //left side IR LED PWR
-int emitterPin2 = 48; //right side IR LED PWR
-int emitterPin3 = 46; //center IR LED PWR
-int sensorPwrPin3 = 47; //center IR sensor PWR pin
-int sensorPin1 = 15; //left side IR sensor
-int sensorPin2 = 14; //right side IR sensor
-int sensorPin3 = 13; //center IR sensor
-int bumpButton = 45;  //front crash button
-int LED = 13; //onboard LED
-
-//variable assignments:
-int irSensor1 = 0;
-int irSensor2 = 0;
-int irSensor3 = 0;
+//Left --> Center --> Right
+int emitterPins[] = {10, 11, 12, 13, 14, 15, 16, 17, 18};
+int sensorPins[]= {45, 46, 47, 48, 49, 50, 51, 52, 53};
 
 //store the AD values from the IR sensors
-int onTile1 = 0;
-int onTile2 = 0;
-int onTile3 = 0;
-int onGrout1 = 0;
-int onGrout2 = 0;
-int onGrout3 = 0;
+int onTile[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+int onGrout[] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 boolean onTrack = false; //set for off grout
-int trackHistory = 0;
+
+//initialize the PID control loop
+int previousError = 0; 
+int integral = 0;
 
 int bumpVal = 1; //front crash button value
 
@@ -45,14 +31,11 @@ void setup() {
   // initialize serial communication at 9600 bits per second:
   Serial.begin(9600);
   // setup IR emitter/receivers:
-  pinMode(emitterPin1, OUTPUT); //IR emitter 1 power pin
-  digitalWrite(emitterPin1, LOW); //IR emitter 1 off
-  pinMode(emitterPin2, OUTPUT); //IR emitter 2 power pin
-  digitalWrite(emitterPin2, LOW); //IR emitter 2 off
-  pinMode(emitterPin3, OUTPUT); //IR emitter 2 power pin (center)
-  digitalWrite(emitterPin3, LOW); //IR emitter 3 off
-  pinMode(sensorPwrPin3, OUTPUT); //IR LED sensor 3 power pin
-  digitalWrite(sensorPwrPin3, HIGH);  //Turn IR sensor power on - could toggle with each read if needed
+  int i;
+  for (i = 0; i < 10; i = i + 1) {
+    pinMode(emitterPins[i], OUTPUT);
+    digitalWrite(emitterPins[i], LOW); //IR emitter off
+  }
   // setup onboard LED
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
@@ -90,37 +73,35 @@ void loop() {
 void calibrate(){
   digitalWrite(LED, LOW);
   //display message to user
-  Serial.println("Place all three sensors over tile, then press 'Bump Button'.");
+  Serial.println("Place all sensors over tile, then press 'Bump Button'.");
   wait_for_bump_button_press();
   Serial.println("OK...");
   digitalWrite(LED, HIGH);
-  onTile1 = IR_sensor(sensorPin1, emitterPin1);
-  onTile2 = IR_sensor(sensorPin2, emitterPin2);
-  onTile3 = IR_sensor(sensorPin3, emitterPin3);
-  Serial.print("On tile, left side: ");
-  Serial.println(onTile1);
-  Serial.print("On tile, right side: ");
-  Serial.println(onTile2);
-  Serial.print("On tile, center: ");
-  Serial.println(onTile3);
+  int i;
+  for (i = 0; i < 10; i = i + 1) {
+    onTile[i] = IR_sensor(sensorPins[i], emitterPins[i]);
+  }
+  Serial.print("On tile, from left to right: ");
+  for (i = 0; i < 10; i = i + 1) {
+    Serial.println(onTile[i]);
+  }
   delay(2500);
   digitalWrite(LED, LOW);  
   Serial.println("...");
-  Serial.println("Place all three sensors over grout line intersection (+), then press 'Bump Button'.");
+  
+  Serial.println("Place all sensors over grout, then press 'Bump Button'.");
   wait_for_bump_button_press();
   Serial.println("OK...");
   digitalWrite(LED, HIGH);
-  onGrout1 = IR_sensor(sensorPin1, emitterPin1);
-  onGrout2 = IR_sensor(sensorPin2, emitterPin2);
-  onGrout3 = IR_sensor(sensorPin3, emitterPin3);
-  Serial.print("On grout, left side: ");
-  Serial.println(onGrout1);
-  Serial.print("On grout, right side: ");
-  Serial.println(onGrout2);
-  Serial.print("On grout, center: ");
-  Serial.println(onGrout3);
+  for (i = 0; i < 10; i = i + 1) {
+    onGrout[i] = IR_sensor(sensorPins[i], emitterPins[i]);
+  }
+  Serial.print("On grout, from left to right: ");
+  for (i = 0; i < 10; i = i + 1) {
+    Serial.println(onGrout[i]);
+  }
   delay(1500);
-  digitalWrite(LED, LOW);
+  digitalWrite(LED, LOW);  
   Serial.println("...");
 }
 
@@ -136,21 +117,19 @@ void wait_for_bump_button_press(){
 //read IR sensor, pass which pin to read
 //returns the integer value of the read analog pin
 int IR_sensor(int sensorPin, int emitterPin){  
-  int n = 8; //right bit shift by this many bits to divide by 2^n, limit this to 2,3, or 4 (4,8, or 16 samples)
+  int n = 3; //right bit shift by this many bits to divide by 2^n, limit this to 2,3, or 4 (4,8, or 16 samples)
   int averageNum = 1 << n; //2^n
   unsigned int background = 0; //value with IR emitter off, must be unsigned to avoid sign extension when dividing
   unsigned int analogVal = 0; //value with IR emitter on
-  int ms = 4;
+  int ms = 5;
   // read background input on analog:
-  digitalWrite(emitterPin, LOW);  //turn IR LED emitter off for background measurement
+  digitalWrite(emitterPin, LOW);
   delay(ms);
-  for(int i = 0; i <= averageNum; i++){ //AD is 10-bit, int is 16-bit, roll-over isn't an issue as long as you collect less than 16 samples
+  for(int i = 0; i <= averageNum; i++){ //AD is 12-bit, int is 16-bit, roll-over isn't an issue as long as you collect less than 16 samples
     background += analogRead(sensorPin);
     delay(ms);
   }
   background >>= n; //get the average value
-  Serial.print("bg= ");
-  Serial.print(background);
   //read illuminated input on analog
   digitalWrite(emitterPin, HIGH);
   delay(ms);
@@ -159,136 +138,46 @@ int IR_sensor(int sensorPin, int emitterPin){
     delay(ms);
   }
   analogVal >>= n; //get the average value
-  Serial.print(" , val = ");
-  Serial.print(analogVal);
+  //Serial.println(analogVal);
   analogVal -= background; //subtract average background
-  Serial.print(" , bgSubVal = ");
-  Serial.println(analogVal);
   digitalWrite(emitterPin, LOW);
   return analogVal;
 }
 
-void scrubRight(int scrubTime) {
- leftServo.write(leftForward); //drive left wheel forward
- delay(scrubTime); //usually around 5ms
-}
-
-void scrubLeft(int scrubTime) {
- rightServo.write(rightForward); //drive right wheel forward
- delay(scrubTime); //usually around 5ms
-}
-
-void scrubForward(int scrubTime) { //drive both wheels forward
-  leftServo.write(leftForward);
-  rightServo.write(rightForward);
-  delay(scrubTime); //usually around 20ms since it is on track
-}
-
-void scrubBackRight() { //drive back and to the right
-  leftServo.write(leftBackward);
-  rightServo.write(rightBackward);
-  delay(150);
-  leftServo.write(76);
-  rightServo.write(76);
-  delay(150);
-  leftServo.write(76);
-  rightServo.write(95);
-  delay(350);
-}
-
-int overGrout(int sensorPin, int emitterPin, int onTile, int onGrout) {
+int overGrout(int sensorPin, int emitterPin, int onTile, int onGrout, int distance) {
  int irSensor = IR_sensor(sensorPin, emitterPin);
  if( abs(irSensor - onTile) <= abs(irSensor - onGrout)) {
-   return 1; //over grout
+   return distance; //over grout
  }
  else {
    return 0; // over tile
- }
+ } 
+}
+
+int pid() {
+  int distances[] = {-4, -3, -2, -1, 0, 1, 2, 3, 4};
+  int Kp = 100; //porportional constant
+  int Ki = 50; //integral constant
+  int Kd = 50; //derivitive constant
+  
+  int error = 0;
+  int i;
+  for (i = 0; i < 10; i = i + 1) {
+    error += overGrout(sensorPins[i], emitterPins[i], onTile[i], onGrout[i], distances[i]);
+  }
+  
+  integral+=error
+  int derivitive = error - previousError;  
+  int correction=(error*Kp) + (integral*Ki) + (derivitive*Kd);
+  return correction;
+  previousError=error;  
 }
 
 void followGrout() {
-  int leftStatus = 0; //could save memory by using status bits rather than whole integers
-  int rightStatus = 0;
-  int centerStatus = 0;
-  int rightWheel = 1;
-  int leftWheel = 1;
-  
-  leftStatus = overGrout(sensorPin1, emitterPin1, onTile1, onGrout1);
-  rightStatus = overGrout(sensorPin2, emitterPin2, onTile2, onGrout2);
-  centerStatus = overGrout(sensorPin3, emitterPin3, onTile3, onGrout3);
-  
-  if (leftStatus == 0 && centerStatus == 0 && rightStatus == 0) {
-    onTrack = false;
-    digitalWrite(LED, HIGH);  //circle around in a widening arc
-    for(rightWheel < 500 || leftStatus == 1 || rightStatus ==1 || centerStatus ==1; rightWheel++;){
-      leftWheel = rightWheel * rightWheel;
-      scrubRight(rightWheel);
-      scrubLeft(leftWheel);
-      leftStatus = overGrout(sensorPin1, emitterPin1, onTile1, onGrout1);
-      rightStatus = overGrout(sensorPin2, emitterPin2, onTile2, onGrout2);
-      centerStatus = overGrout(sensorPin3, emitterPin3, onTile3, onGrout3);
-    }
-  }
-  else if (leftStatus == 0 && centerStatus == 0 && rightStatus == 1) {
-    onTrack = false;
-    digitalWrite(LED, HIGH);
-    scrubRight(7); //go toward the grout
-  }
-  else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 0) {
-    onTrack = true;
-    digitalWrite(LED, LOW);
-    scrubForward(20); //on track, keep on truckin'
-  }
-  else if (leftStatus == 0 && centerStatus == 1 && rightStatus == 1) {
-    onTrack = true;
-    digitalWrite(LED, LOW);
-    scrubRight(3); //adjust alignmnet a little
-  }
-  else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 0) {
-    onTrack = false;
-    digitalWrite(LED, HIGH);
-    scrubLeft(7); //go toward the grout
-  }
-  else if (leftStatus == 1 && centerStatus == 0 && rightStatus == 1) {
-    onTrack = false;
-    digitalWrite(LED, HIGH);
-    scrubRight(20); //over tile only,near groutline, try to align with grout again
-  }
-  else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 0) {
-    onTrack = true;
-    digitalWrite(LED, LOW);
-    scrubLeft(3); //adjust alignment
-  }
-  else if (leftStatus == 1 && centerStatus == 1 && rightStatus == 1) {
-    onTrack = true;
-    digitalWrite(LED, LOW);
-    scrubForward(20); //on track at a grout crossing, opportunity for re-calibration
-  }
-  else { // do nothing but wait and blink the LED, since this section should never run
-    onTrack = false;
-    digitalWrite(LED, HIGH);
-    delay(500);
-    digitalWrite(LED, LOW);
-    delay(500);
-    digitalWrite(LED, HIGH);
-    delay(500);
-  }
-
-  bumpVal = digitalRead(bumpButton);
-  if(bumpVal == 0) {
-    bumpVal = 1;
-    digitalWrite(LED, HIGH);
-    scrubBackRight();
-  }
-  if(onTrack == false) {
-     off_track();
-  }
+  leftServo.write(leftForward);
+  rightServo.write(rightForward);
+  delay(6)
+  correction = pid();
+  leftServo.write(leftForward*correction);
+  rightServo.write(rightForward*correction);  
 }
-
-void off_track() { //if the scrubBOT is off track
-  trackHistory += trackHistory;
-  if(trackHistory > 5) {
-   trackHistory = 0; //reset history
-  }
-}
-
